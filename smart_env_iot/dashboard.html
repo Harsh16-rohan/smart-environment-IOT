@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><title>Smart Environment IoT Dashboard</title>
+<style>
+body{font-family:system-ui,sans-serif;margin:0;background:#f4f6f8;color:#222}
+header{background:#1f3a5f;color:#fff;padding:14px 24px}
+main{padding:20px;display:grid;grid-template-columns:repeat(auto-fit,minmax(380px,1fr));gap:16px}
+.card{background:#fff;border-radius:10px;padding:16px;box-shadow:0 1px 4px #0002}
+.vals{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin:10px 0}
+.v{background:#eef2f7;border-radius:8px;padding:8px;text-align:center}
+.v b{display:block;font-size:20px}.v span{font-size:11px;color:#666}
+button{padding:5px 10px;margin:2px;border:1px solid #1f3a5f;background:#fff;border-radius:6px;cursor:pointer}
+button.act{background:#1f3a5f;color:#fff}
+.on{color:#0a8f3c;font-weight:bold}.off{color:#999}
+canvas{width:100%;height:120px}
+#alerts div{padding:4px 0;border-bottom:1px solid #eee;font-size:13px}
+select{padding:3px}
+</style></head><body>
+<header><h2 style="margin:0">Smart Environment Monitoring &amp; Control</h2>
+<small id="stats"></small></header>
+<main id="main"></main>
+<div style="padding:0 20px 20px"><div class="card"><h3>Recent alerts</h3><div id="alerts"></div></div></div>
+<script>
+const KINDS={temperature:"°C",humidity:"%",air_quality:"ppm",motion:""};
+const main=document.getElementById("main");let built={};
+function build(room){
+ const c=document.createElement("div");c.className="card";c.id="c-"+room;
+ c.innerHTML=`<h3>${room}</h3><div class="vals">${Object.keys(KINDS).map(k=>
+  `<div class="v"><b id="${room}-${k}">–</b><span>${k.replace("_"," ")} ${KINDS[k]}</span></div>`).join("")}</div>
+  ${["fan","vent"].map(a=>`<div>${a}: <span id="${room}-${a}-st" class="off">OFF</span>
+   <button onclick="setAct('${room}','${a}','on')">On</button>
+   <button onclick="setAct('${room}','${a}','off')">Off</button>
+   <button id="${room}-${a}-auto" onclick="setAct('${room}','${a}','auto')">Auto</button></div>`).join("")}
+  <p>History: <select id="${room}-sel">${Object.keys(KINDS).filter(k=>k!="motion").map(k=>`<option>${k}</option>`).join("")}</select></p>
+  <canvas id="${room}-cv" width="400" height="120"></canvas>`;
+ main.appendChild(c);built[room]=true;}
+async function setAct(room,actuator,mode){
+ await fetch("/api/actuator",{method:"POST",body:JSON.stringify({room,actuator,mode})});refresh();}
+function draw(id,data){
+ const cv=document.getElementById(id),g=cv.getContext("2d");g.clearRect(0,0,cv.width,cv.height);
+ if(data.length<2)return;const vs=data.map(d=>d.value),mn=Math.min(...vs),mx=Math.max(...vs)||1;
+ g.strokeStyle="#1f3a5f";g.lineWidth=2;g.beginPath();
+ data.forEach((d,i)=>{const x=i/(data.length-1)*cv.width,y=cv.height-8-(d.value-mn)/((mx-mn)||1)*(cv.height-16);
+  i?g.lineTo(x,y):g.moveTo(x,y)});g.stroke();
+ g.fillStyle="#666";g.font="11px sans-serif";g.fillText(mx.toFixed(1),2,10);g.fillText(mn.toFixed(1),2,cv.height-2);}
+async function refresh(){
+ const s=await (await fetch("/api/state")).json();
+ document.getElementById("stats").textContent=
+  `Stored readings: ${s.stats.readings} | alerts: ${s.stats.alerts} | rejected (faulty): ${s.rejected} | offline: ${s.offline_devices.length}`;
+ for(const room of Object.keys(s.rooms)){
+  if(!built[room])build(room);
+  for(const k in KINDS){const e=document.getElementById(`${room}-${k}`);if(e)e.textContent=s.rooms[room][k]??"–";}
+  for(const a of ["fan","vent"]){const on=s.actuators[room][a];const e=document.getElementById(`${room}-${a}-st`);
+   e.textContent=on?"ON":"OFF";e.className=on?"on":"off";
+   document.getElementById(`${room}-${a}-auto`).className=s.manual.includes(`${room}/${a}`)?"":"act";}
+  const kind=document.getElementById(room+"-sel").value;
+  draw(room+"-cv",await (await fetch(`/api/history?room=${room}&kind=${kind}`)).json());}
+ const al=await (await fetch("/api/alerts")).json();
+ document.getElementById("alerts").innerHTML=al.map(a=>
+  `<div>${new Date(a.ts*1000).toLocaleTimeString()} — <b>${a.room}</b>: ${a.message}</div>`).join("")||"No alerts yet";}
+refresh();setInterval(refresh,2000);
+</script></body></html>
